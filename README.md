@@ -4,6 +4,8 @@
 
 **The Tower** is a browser-based 8-bit top-down shooter inspired by the original Legend of Zelda. Fight your way through a 10-floor tower packed with themed dungeons, deadly monsters, and brutal boss fights — all rendered in classic pixel art with chiptune sound effects, built entirely from scratch with no libraries or external assets.
 
+**Note** There are a few bugs that I am still ironing out.
+
 ---
 
 ## Screenshots / Gameplay
