@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --version)",
+      "Bash(npx --version)",
+      "Bash(powershell.exe -Command \"Get-Command python,python3,node,npx 2>$null | Select-Object Name,Source\")",
+      "Bash(powershell.exe -Command \"python --version\")",
+      "Bash(powershell.exe -Command \"node --version\")",
+      "Bash(powershell.exe -Command \"where.exe python; where.exe node; where.exe php\")",
+      "Bash(powershell.exe -Command \"python -c ''print\\(1\\)''\")",
+      "Bash(powershell.exe -Command \"Invoke-WebRequest -Uri ''http://localhost:8080/'' -UseBasicParsing | Select-Object -ExpandProperty StatusCode\")",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}
