@@ -1,21 +1,27 @@
 // The Tower - Game State Machine
 
-import { STATE, DIFFICULTY, ROOMS_PER_FLOOR, PLAYER_MAX_LIVES, GAME_AREA_Y, BULLET_PACK_DROP_CHANCE, BULLET_PACK_AMMO, STARTING_AMMO } from './constants.js';
+import { STATE, DIFFICULTY, PATH_CONFIG, PLAYER_MAX_LIVES, GAME_AREA_Y, NATIVE_WIDTH, TILE_SIZE, BULLET_PACK_DROP_CHANCE, BULLET_PACK_AMMO, STARTING_AMMO, SWORD_RANGE } from './constants.js';
 import { isActionPressed, isKeyJustPressed, isKeyDown } from './input.js';
-import { player, resetPlayer, updatePlayer, damagePlayer, healPlayer, isPlayerAtRightEdge, addAmmo, ensureMinAmmo } from './player.js';
+import { player, resetPlayer, updatePlayer, damagePlayer, damagePlayerDouble, healPlayer, isPlayerAtRightEdge, isPlayerAtLeftEdge, isPlayerAtTopEdge, isPlayerAtBottomEdge, addAmmo, ensureMinAmmo } from './player.js';
 import { bulletPacks, spawnBulletPack, updateBulletPacks, getActiveBulletPacks, collectBulletPack, clearBulletPacks } from './bulletpack.js';
 import { bullets, updateBullets, clearBullets, removeBullet } from './bullet.js';
-import { monsters, spawnMonsters, updateMonsters, killMonster, getActiveMonsters, clearMonsters } from './monster.js';
+import { monsters, spawnMonsters, updateMonsters, killMonster, damageMonster, getActiveMonsters, clearMonsters } from './monster.js';
 import { boss, spawnBoss, updateBoss, damageBoss, clearBoss } from './boss.js';
 import { heart, spawnHeart, updateHeart, collectHeart, clearHeart } from './heart.js';
-import { generateRoomLayout, openRightWall } from './room.js';
-import { gameProgress, getCurrentFloor, getCurrentFloorIndex, getCurrentRoom, isBossRoom, isLastFloor, advanceRoom, advanceFloor, restartFloor, resetProgress, setDifficulty, markRoomCleared, markHeartCollected } from './floor.js';
-import { aabbCollision, isNearEntity } from './collision.js';
+import { generateRoomLayout, generateCrossroadsLayout, openRightWall, openLeftWall, closeTopWall, closeBottomWall } from './room.js';
+import { gameProgress, getCurrentFloor, getCurrentFloorIndex, getCurrentRoom, isBossRoom, isCrossroadsRoom, isLastFloor, advanceRoom, advanceFloor, restartFloor, resetProgress, setDifficulty, markRoomCleared, markHeartCollected, canGoBack, goBackRoom, saveRoomState, getRoomState, initFloorPaths, selectPath } from './floor.js';
+import { aabbCollision, isNearEntity, distanceBetween } from './collision.js';
 import { sfxMonsterDeath, sfxBossHit, sfxBossDeath, sfxHeartPickup, sfxRoomClear, sfxFloorClear, sfxGameOver, sfxVictory, sfxSelect, resumeAudio } from './audio.js';
 
 let currentState = STATE.TITLE;
 let stateData = {};
 let lastKilledPos = { x: 0, y: 0 };
+
+// Monster activation — monsters wander until player moves 5 tiles from room entry
+let monstersActivated = false;
+let monstersEnraged  = false; // true if player attacked before activation (3× speed, sword useless)
+let playerEntryX = 0;
+let playerEntryY = 0;
 
 export function getCurrentState() {
     return currentState;
@@ -105,18 +111,37 @@ function updatePlaying() {
     const diff = DIFFICULTY[gameProgress.difficulty];
     const bossRoom = isBossRoom();
 
+    // Capture attack state BEFORE player update (to detect early attacks)
+    const prevShootCooldown = player.shootCooldown;
+    const prevSwordSwing    = player.swordSwing;
+
     // Update player
     updatePlayer(layout, gameProgress.roomCleared);
 
     // Update bullets
     updateBullets();
 
-    // Update monsters
-    if (!bossRoom || !boss.active) {
-        // Only update monsters in non-boss rooms (or if boss is dead for some reason)
-    }
-    if (!bossRoom) {
-        updateMonsters(player, diff.monsterSpeedMult, layout);
+    // Update monsters (skip crossroads — no enemies there)
+    if (!bossRoom && !isCrossroadsRoom()) {
+        if (!monstersActivated) {
+            // Check if player attacked early — instant enrage at 3× speed
+            const shotFired = player.shootCooldown > prevShootCooldown;
+            const swordSwung = prevSwordSwing === 0 && player.swordSwing > 0;
+            if (shotFired || swordSwung) {
+                monstersActivated = true;
+                monstersEnraged = true;
+            } else {
+                // Normal activation: walked 5 tiles from entry
+                const adx = player.x - playerEntryX;
+                const ady = player.y - playerEntryY;
+                if (Math.sqrt(adx * adx + ady * ady) >= TILE_SIZE * 5) {
+                    monstersActivated = true;
+                }
+            }
+        }
+        const pathSpeedBonus = gameProgress.selectedPath ? PATH_CONFIG[gameProgress.selectedPath].speedBonus : 0;
+        const enrageMult = monstersEnraged ? 3.0 : 1.0;
+        updateMonsters(player, (diff.monsterSpeedMult + pathSpeedBonus) * enrageMult, layout, monstersActivated);
     }
 
     // Update boss
@@ -169,8 +194,8 @@ function updatePlaying() {
         }
     }
 
-    // Monsters touching player
-    if (!bossRoom) {
+    // Monsters touching player (disabled during grace period)
+    if (!bossRoom && monstersActivated) {
         for (const m of monsters) {
             if (!m.active) continue;
             if (aabbCollision(player, m)) {
@@ -196,15 +221,47 @@ function updatePlaying() {
         }
     }
 
-    // Boss bullets hitting player
+    // Enemy bullets hitting player (boss = 1 life, monster fireball = 2 lives)
     for (const b of [...bullets]) {
         if (b.isPlayerBullet) continue;
-        if (aabbCollision(b, player)) {
-            removeBullet(b);
-            if (damagePlayer()) {
-                if (player.lives <= 0) {
-                    onPlayerDeath();
+        if (!aabbCollision(b, player)) continue;
+        removeBullet(b);
+        const hit = b.isMonsterBullet ? damagePlayerDouble() : damagePlayer();
+        if (hit && player.lives <= 0) {
+            onPlayerDeath();
+            return;
+        }
+    }
+
+    // Sword attack
+    if (player.swordSwing > 0 && !player.swordHit) {
+        player.swordHit = true;
+        if (!bossRoom) {
+            for (const m of [...monsters]) {
+                if (!m.active) continue;
+                if (distanceBetween(player, m) <= SWORD_RANGE) {
+                    if (monstersEnraged) continue; // sword useless against enraged monsters
+                    const dead = damageMonster(m, 1); // sword does 1 of 2 HP
+                    if (dead) {
+                        lastKilledPos = { x: m.x + m.width / 2, y: m.y + m.height / 2 };
+                        sfxMonsterDeath();
+                        if (Math.random() < BULLET_PACK_DROP_CHANCE) {
+                            spawnBulletPack(lastKilledPos.x, lastKilledPos.y);
+                        }
+                    }
+                }
+            }
+        }
+        if (bossRoom && boss.active) {
+            if (distanceBetween(player, boss) <= SWORD_RANGE) {
+                const dead = damageBoss(0.5); // sword does half gun damage
+                if (dead) {
+                    sfxBossDeath();
+                    clearBoss();
+                    onBossDefeated();
                     return;
+                } else {
+                    sfxBossHit();
                 }
             }
         }
@@ -221,11 +278,11 @@ function updatePlaying() {
         }
     }
 
-    // Check if room is cleared
+    // Check if room is cleared (crossroads never auto-clears — player walks to an exit instead)
     if (!gameProgress.roomCleared) {
         if (bossRoom) {
             // Boss room cleared when boss is dead (handled in onBossDefeated)
-        } else {
+        } else if (!isCrossroadsRoom()) {
             const alive = getActiveMonsters();
             if (alive.length === 0) {
                 onRoomCleared(lastKilledPos.x, lastKilledPos.y);
@@ -233,8 +290,8 @@ function updatePlaying() {
         }
     }
 
-    // Heart pickup
-    if (heart.active && isNearEntity(player, heart, 20) && isActionPressed()) {
+    // Heart pickup (press E when nearby)
+    if (heart.active && isNearEntity(player, heart, 20) && isKeyJustPressed('KeyE')) {
         if (healPlayer()) {
             collectHeart();
             markHeartCollected();
@@ -253,32 +310,76 @@ function updatePlaying() {
         }
     }
 
-    // Room transition - walk to right edge
+    // Crossroads path selection — player walks to one of the three exits
+    if (isCrossroadsRoom() && !gameProgress.selectedPath) {
+        if (isPlayerAtRightEdge())  { choosePath('right'); return; }
+        if (isPlayerAtTopEdge())    { choosePath('up');    return; }
+        if (isPlayerAtBottomEdge()) { choosePath('down');  return; }
+    }
+
+    // Room transition - walk to right edge after room is cleared
     if (gameProgress.roomCleared && isPlayerAtRightEdge()) {
         startRoomTransition();
+        return;
+    }
+
+    // Return to previous room - walk to left edge (not in boss rooms)
+    if (!bossRoom && canGoBack() && isPlayerAtLeftEdge()) {
+        startBackTransition();
     }
 }
 
 function updateTransition() {
     stateData.progress = (stateData.progress || 0) + 0.02;
 
-    // Move player along with transition
-    player.x = 8; // Player appears at left of new room
+    const direction = stateData.direction || 'forward';
+
+    // Keep player pinned to correct side during animation
+    player.x = direction === 'backward' ? NATIVE_WIDTH - player.width - 8 : 8;
 
     if (stateData.progress >= 1) {
-        // Transition complete
-        gameProgress._roomLayout = stateData.newLayout;
-        gameProgress.roomCleared = false;
-        gameProgress.heartCollected = false;
-        player.x = 20;
-        player.y = GAME_AREA_Y + 96;
         clearBullets();
-        clearHeart();
-        clearBulletPacks();
-        setupRoomEntities(); // This may set BOSS_INTRO state for room 8
-        // Only set PLAYING if we didn't enter boss intro
-        if (getCurrentState() !== STATE.BOSS_INTRO) {
+
+        const rs = stateData.restoredState;
+
+        if (rs) {
+            // Restore a previously saved room (forward revisit OR backward)
+            gameProgress._roomLayout = rs.layout;
+            gameProgress.roomCleared = rs.cleared;
+            gameProgress.heartCollected = rs.heartCollected;
+
+            monsters.length = 0;
+            for (const m of rs.monsters) monsters.push({ ...m });
+
+            bulletPacks.length = 0;
+            for (const p of rs.bulletPacks) bulletPacks.push({ ...p });
+
+            Object.assign(heart, rs.heart);
+
+            player.x = direction === 'backward' ? NATIVE_WIDTH - player.width - 30 : 20;
+            player.y = GAME_AREA_Y + 96;
+            monstersActivated = true; // player has been here before — no grace period
             setState(STATE.PLAYING);
+        } else {
+            // Fresh forward room
+            gameProgress._roomLayout = stateData.newLayout;
+            gameProgress.roomCleared = false;
+            gameProgress.heartCollected = false;
+            player.x = 20;
+            player.y = GAME_AREA_Y + 96;
+            // Grace period: monsters wait until player moves 5 tiles in
+            monstersActivated = false;
+            monstersEnraged   = false;
+            playerEntryX = player.x;
+            playerEntryY = player.y;
+            clearHeart();
+            clearBulletPacks();
+            // Open left wall if this room has a previous room
+            if (canGoBack()) openLeftWall(gameProgress._roomLayout);
+            setupRoomEntities(); // may set BOSS_INTRO for the last room
+            if (getCurrentState() !== STATE.BOSS_INTRO) {
+                setState(STATE.PLAYING);
+            }
         }
     }
 }
@@ -296,6 +397,7 @@ function updateGameOver() {
         // Restart floor
         restartFloor();
         resetPlayer(true);
+        player.ammo = STARTING_AMMO; // reset bullets to 10 on death
         startFloor();
     }
 }
@@ -328,6 +430,7 @@ function updateWin() {
 // =====================
 
 function startFloor() {
+    initFloorPaths(); // randomise path assignments for this floor
     clearBullets();
     clearMonsters();
     clearBoss();
@@ -337,7 +440,9 @@ function startFloor() {
 }
 
 function setupRoom() {
-    const layout = generateRoomLayout(getCurrentFloorIndex(), getCurrentRoom());
+    const layout = isCrossroadsRoom()
+        ? generateCrossroadsLayout()
+        : generateRoomLayout(getCurrentFloorIndex(), getCurrentRoom());
     gameProgress._roomLayout = layout;
     gameProgress.roomCleared = false;
     gameProgress.heartCollected = false;
@@ -346,24 +451,48 @@ function setupRoom() {
     clearBullets();
     clearHeart();
 
+    // Monsters wait until player moves into the room
+    monstersActivated = false;
+    monstersEnraged   = false;
+    playerEntryX = player.x;
+    playerEntryY = player.y;
+
     setupRoomEntities();
 }
 
 function setupRoomEntities() {
     const diff = DIFFICULTY[gameProgress.difficulty];
     const bossRoom = isBossRoom();
+    const crossroads = isCrossroadsRoom();
 
     clearMonsters();
     clearBoss();
     clearBullets();
 
+    if (crossroads) {
+        // No enemies in the crossroads — player just picks a path
+        return;
+    }
+
     if (bossRoom) {
         spawnBoss(getCurrentFloorIndex());
-        // Show boss intro
         setState(STATE.BOSS_INTRO, { timer: 0 });
     } else {
-        spawnMonsters(diff.monstersPerRoom, gameProgress._roomLayout, getCurrentFloorIndex());
+        const pathBonus = gameProgress.selectedPath ? PATH_CONFIG[gameProgress.selectedPath].monsterBonus : 0;
+        spawnMonsters(diff.monstersPerRoom + pathBonus, gameProgress._roomLayout, getCurrentFloorIndex());
     }
+}
+
+// Called when the player commits to a crossroads exit
+function choosePath(exit) {
+    selectPath(exit); // sets gameProgress.selectedPath and pathRooms
+    const layout = gameProgress._roomLayout;
+    // Always close top and bottom — they were selection tools, the real exit is right
+    closeTopWall(layout);
+    closeBottomWall(layout);
+    // Right wall is already open from generateCrossroadsLayout; leave it open
+    markRoomCleared();
+    startRoomTransition(); // save crossroads state and advance to room 1
 }
 
 function onRoomCleared(x, y) {
@@ -395,26 +524,63 @@ function onPlayerDeath() {
     setState(STATE.GAME_OVER, { timer: 0 });
 }
 
+// Snapshot the current room's entity state so it can be restored later
+function saveCurrentRoomState() {
+    saveRoomState(gameProgress.currentRoom, {
+        layout: gameProgress._roomLayout,
+        monsters: monsters.map(m => ({ ...m })),
+        bulletPacks: bulletPacks.map(p => ({ ...p })),
+        heart: { ...heart },
+        cleared: gameProgress.roomCleared,
+        heartCollected: gameProgress.heartCollected,
+    });
+}
+
 function startRoomTransition() {
+    // Freeze the current room before leaving
+    saveCurrentRoomState();
+
     const oldLayout = gameProgress._roomLayout;
+    const nextRoomIdx = gameProgress.currentRoom + 1;
 
     // Advance to next room
     const floorDone = advanceRoom();
 
     if (floorDone) {
-        // This shouldn't happen since boss room should handle floor advancement
-        // But just in case
         sfxFloorClear();
         setState(STATE.FLOOR_CLEAR, { timer: 0 });
         return;
     }
 
-    // Generate new room layout
-    const newLayout = generateRoomLayout(getCurrentFloorIndex(), getCurrentRoom());
+    // Use saved state if player has been here before, otherwise generate fresh
+    const savedState = getRoomState(nextRoomIdx);
+    const newLayout = savedState ? savedState.layout : generateRoomLayout(getCurrentFloorIndex(), getCurrentRoom());
 
     setState(STATE.ROOM_TRANSITION, {
         progress: 0,
         oldLayout,
-        newLayout
+        newLayout,
+        direction: 'forward',
+        restoredState: savedState,
+    });
+}
+
+function startBackTransition() {
+    // Freeze the current room before leaving
+    saveCurrentRoomState();
+
+    const oldLayout = gameProgress._roomLayout;
+    const prevRoomIdx = gameProgress.currentRoom - 1;
+
+    goBackRoom(); // currentRoom decrements to prevRoomIdx
+
+    const prevState = getRoomState(prevRoomIdx); // always exists — we saved it when we left
+
+    setState(STATE.ROOM_TRANSITION, {
+        progress: 0,
+        oldLayout,
+        newLayout: prevState.layout,
+        direction: 'backward',
+        restoredState: prevState,
     });
 }

@@ -64,13 +64,75 @@ export function generateRoomLayout(floorIndex, roomIndex) {
     return layout;
 }
 
+// Generate the crossroads room — open on right, top, and bottom (no interior walls)
+export function generateCrossroadsLayout() {
+    const layout = [];
+    for (let r = 0; r < ROOM_ROWS; r++) {
+        layout[r] = [];
+        for (let c = 0; c < ROOM_COLS; c++) layout[r][c] = 0;
+    }
+    // Perimeter walls
+    for (let c = 0; c < ROOM_COLS; c++) {
+        layout[0][c] = 1;
+        layout[ROOM_ROWS - 1][c] = 1;
+    }
+    for (let r = 0; r < ROOM_ROWS; r++) {
+        layout[r][0] = 1;
+        layout[r][ROOM_COLS - 1] = 1;
+    }
+    // Open all three exits so player can choose
+    openRightWall(layout);
+    openTopWall(layout);
+    openBottomWall(layout);
+    return layout;
+}
+
+// Open/close the top wall at the middle columns (path selection exit)
+export function openTopWall(layout) {
+    const midCol = Math.floor(ROOM_COLS / 2);
+    for (let c = midCol - 1; c <= midCol; c++) {
+        if (c >= 0 && c < ROOM_COLS) layout[0][c] = 0;
+    }
+}
+
+export function closeTopWall(layout) {
+    const midCol = Math.floor(ROOM_COLS / 2);
+    for (let c = midCol - 1; c <= midCol; c++) {
+        if (c >= 0 && c < ROOM_COLS) layout[0][c] = 1;
+    }
+}
+
+// Open/close the bottom wall at the middle columns (path selection exit)
+export function openBottomWall(layout) {
+    const midCol = Math.floor(ROOM_COLS / 2);
+    for (let c = midCol - 1; c <= midCol; c++) {
+        if (c >= 0 && c < ROOM_COLS) layout[ROOM_ROWS - 1][c] = 0;
+    }
+}
+
+export function closeBottomWall(layout) {
+    const midCol = Math.floor(ROOM_COLS / 2);
+    for (let c = midCol - 1; c <= midCol; c++) {
+        if (c >= 0 && c < ROOM_COLS) layout[ROOM_ROWS - 1][c] = 1;
+    }
+}
+
 // Open the right wall for passage (called when room is cleared)
 export function openRightWall(layout) {
-    // Open a gap in the middle of the right wall
     const midRow = Math.floor(ROOM_ROWS / 2);
     for (let r = midRow - 2; r <= midRow + 1; r++) {
         if (r >= 0 && r < ROOM_ROWS) {
             layout[r][ROOM_COLS - 1] = 0;
+        }
+    }
+}
+
+// Open the left wall so the player can return to the previous room
+export function openLeftWall(layout) {
+    const midRow = Math.floor(ROOM_ROWS / 2);
+    for (let r = midRow - 2; r <= midRow + 1; r++) {
+        if (r >= 0 && r < ROOM_ROWS) {
+            layout[r][0] = 0;
         }
     }
 }

@@ -1,6 +1,6 @@
 // The Tower - Renderer
 
-import { NATIVE_WIDTH, NATIVE_HEIGHT, SCALE, TILE_SIZE, GAME_AREA_Y, ROOM_COLS, ROOM_ROWS, BOSS_HP, PLAYER_MAX_LIVES, MAX_AMMO, STATE, DIR, ROOMS_PER_FLOOR, TOTAL_FLOORS } from './constants.js';
+import { NATIVE_WIDTH, NATIVE_HEIGHT, SCALE, TILE_SIZE, GAME_AREA_Y, ROOM_COLS, ROOM_ROWS, BOSS_HP, PLAYER_MAX_LIVES, MAX_AMMO, STATE, DIR, SWORD_SWING_FRAMES } from './constants.js';
 import { getSpriteImage, PLAYER_SPRITES, HEART_SPRITE, HEART_SMALL, HEART_EMPTY, BULLET_SPRITE, BOSS_BULLET_SPRITE, BULLET_PACK_SPRITE, PRINCESS_SPRITE, makeWallTile, makeFloorTile, makeDoorTile } from './sprites.js';
 import { player } from './player.js';
 import { bullets } from './bullet.js';
@@ -9,7 +9,7 @@ import { boss } from './boss.js';
 import { heart } from './heart.js';
 import { bulletPacks } from './bulletpack.js';
 import { getMonsterSprites, getBossSprite } from './sprites.js';
-import { getCurrentFloor, getCurrentFloorIndex, getCurrentRoom, gameProgress, isBossRoom } from './floor.js';
+import { getCurrentFloor, getCurrentFloorIndex, getCurrentRoom, gameProgress, isBossRoom, isCrossroadsRoom, getRoomsPerFloor, canGoBack } from './floor.js';
 
 let canvas, ctx;
 let nativeCanvas, nativeCtx;
@@ -92,6 +92,9 @@ function renderGame() {
     updateTileCache();
     renderRoom(gameProgress._roomLayout);
     renderEntities();
+    if (isCrossroadsRoom() && !gameProgress.selectedPath) {
+        renderCrossroadsLabels();
+    }
     renderHUD();
 }
 
@@ -118,17 +121,64 @@ function renderRoom(layout) {
             const x = (ROOM_COLS - 1) * TILE_SIZE;
             const y = r * TILE_SIZE + GAME_AREA_Y;
             nativeCtx.drawImage(floorTileCache, x, y);
-            // Draw arrow indicator
             if (r === midRow - 1 || r === midRow) {
                 nativeCtx.fillStyle = '#ffff00';
                 nativeCtx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.005) * 0.3;
-                // Arrow shape
                 const ax = x + 4;
                 const ay = y + 4;
                 nativeCtx.beginPath();
                 nativeCtx.moveTo(ax, ay);
                 nativeCtx.lineTo(ax + 8, ay + 4);
                 nativeCtx.lineTo(ax, ay + 8);
+                nativeCtx.fill();
+                nativeCtx.globalAlpha = 1;
+            }
+        }
+    }
+
+    // Draw crossroads top/bottom exit arrows (only when path not yet chosen)
+    if (isCrossroadsRoom() && !gameProgress.selectedPath) {
+        const midCol = Math.floor(ROOM_COLS / 2);
+        const pulse = 0.5 + Math.sin(Date.now() * 0.005) * 0.3;
+        nativeCtx.fillStyle = '#88ffaa';
+        nativeCtx.globalAlpha = pulse;
+
+        // Up arrow centred over the top opening
+        const openMidX = (midCol - 1) * TILE_SIZE + TILE_SIZE; // midpoint of cols 7-8
+        nativeCtx.beginPath();
+        nativeCtx.moveTo(openMidX - 5, GAME_AREA_Y + 10);
+        nativeCtx.lineTo(openMidX,     GAME_AREA_Y + 4);
+        nativeCtx.lineTo(openMidX + 5, GAME_AREA_Y + 10);
+        nativeCtx.fill();
+
+        // Down arrow at the bottom opening
+        const botY = (ROOM_ROWS - 1) * TILE_SIZE + GAME_AREA_Y;
+        nativeCtx.beginPath();
+        nativeCtx.moveTo(openMidX - 5, botY + 4);
+        nativeCtx.lineTo(openMidX,     botY + 10);
+        nativeCtx.lineTo(openMidX + 5, botY + 4);
+        nativeCtx.fill();
+
+        nativeCtx.globalAlpha = 1;
+    }
+
+    // Draw left-door opening and back-arrow when a previous room exists
+    if (canGoBack() && !isBossRoom()) {
+        const midRow = Math.floor(ROOM_ROWS / 2);
+        for (let r = midRow - 2; r <= midRow + 1; r++) {
+            const x = 0;
+            const y = r * TILE_SIZE + GAME_AREA_Y;
+            nativeCtx.drawImage(floorTileCache, x, y);
+            if (r === midRow - 1 || r === midRow) {
+                nativeCtx.fillStyle = '#aaaaff';
+                nativeCtx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.005) * 0.3;
+                // Left-pointing arrow
+                const ax = x + 2;
+                const ay = y + 4;
+                nativeCtx.beginPath();
+                nativeCtx.moveTo(ax + 8, ay);
+                nativeCtx.lineTo(ax, ay + 4);
+                nativeCtx.lineTo(ax + 8, ay + 8);
                 nativeCtx.fill();
                 nativeCtx.globalAlpha = 1;
             }
@@ -153,7 +203,7 @@ function renderEntities() {
         nativeCtx.fillStyle = '#ffffff';
         nativeCtx.font = '5px monospace';
         nativeCtx.textAlign = 'center';
-        nativeCtx.fillText('SPACE', heart.x + 8, heart.y - 4);
+        nativeCtx.fillText('[E]', heart.x + 8, heart.y - 4);
         nativeCtx.textAlign = 'left';
     }
 
@@ -189,10 +239,39 @@ function renderEntities() {
         if (b.isPlayerBullet) {
             const img = getSpriteImage(BULLET_SPRITE);
             nativeCtx.drawImage(img, Math.floor(b.x), Math.floor(b.y));
+        } else if (b.isMonsterBullet) {
+            // Orange fireball — outer glow + bright core
+            nativeCtx.fillStyle = '#ff4400';
+            nativeCtx.fillRect(Math.floor(b.x), Math.floor(b.y), b.width, b.height);
+            nativeCtx.fillStyle = '#ffcc00';
+            nativeCtx.fillRect(Math.floor(b.x) + 1, Math.floor(b.y) + 1, b.width - 2, b.height - 2);
         } else {
             const img = getSpriteImage(BOSS_BULLET_SPRITE);
             nativeCtx.drawImage(img, Math.floor(b.x), Math.floor(b.y));
         }
+    }
+
+    // Sword swing arc
+    if (player.active && player.swordSwing > 0) {
+        const cx = player.x + player.width / 2;
+        const cy = player.y + player.height / 2;
+        const dirAngles = { [DIR.RIGHT]: 0, [DIR.DOWN]: Math.PI / 2, [DIR.LEFT]: Math.PI, [DIR.UP]: -Math.PI / 2 };
+        const baseAngle = dirAngles[player.direction];
+        const alpha = player.swordSwing / SWORD_SWING_FRAMES;
+        nativeCtx.save();
+        nativeCtx.strokeStyle = `rgba(200, 220, 255, ${alpha})`;
+        nativeCtx.lineWidth = 3;
+        nativeCtx.beginPath();
+        nativeCtx.arc(cx, cy, 18, baseAngle - Math.PI / 3, baseAngle + Math.PI / 3);
+        nativeCtx.stroke();
+        // Sword blade line
+        nativeCtx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.8})`;
+        nativeCtx.lineWidth = 1;
+        nativeCtx.beginPath();
+        nativeCtx.moveTo(cx, cy);
+        nativeCtx.lineTo(cx + Math.cos(baseAngle) * 20, cy + Math.sin(baseAngle) * 20);
+        nativeCtx.stroke();
+        nativeCtx.restore();
     }
 
     // Player
@@ -244,6 +323,20 @@ function renderHUD() {
     nativeCtx.fillText(`${ammo}/${MAX_AMMO}`, NATIVE_WIDTH - 2, 19);
     nativeCtx.textAlign = 'left';
 
+    // Weapon indicator (top-right, row 1 — shown when no boss bar)
+    if (!boss.active) {
+        const isGun = player.weapon === 'gun';
+        nativeCtx.font = '5px monospace';
+        nativeCtx.textAlign = 'right';
+        // Gun label
+        nativeCtx.fillStyle = isGun ? '#FFD700' : '#555555';
+        nativeCtx.fillText('[1]GUN', NATIVE_WIDTH - 36, 8);
+        // Sword label
+        nativeCtx.fillStyle = !isGun ? '#88ccff' : '#555555';
+        nativeCtx.fillText('[2]SWD', NATIVE_WIDTH - 2, 8);
+        nativeCtx.textAlign = 'left';
+    }
+
     // Boss HP (top-right, row 1)
     if (boss.active) {
         const barWidth = 60;
@@ -271,7 +364,61 @@ function renderHUD() {
     nativeCtx.font = '5px monospace';
     nativeCtx.textAlign = 'center';
     const floor = getCurrentFloor();
-    nativeCtx.fillText(`F${getCurrentFloorIndex() + 1}:${floor.name}  R${getCurrentRoom() + 1}/${ROOMS_PER_FLOOR}`, NATIVE_WIDTH / 2, 9);
+    const floorLabel = `F${getCurrentFloorIndex() + 1}:${floor.name}`;
+    let roomLabel;
+    if (isCrossroadsRoom() && !gameProgress.selectedPath) {
+        roomLabel = 'CHOOSE PATH';
+    } else if (isCrossroadsRoom()) {
+        roomLabel = `0/${getRoomsPerFloor()}`;
+    } else {
+        roomLabel = `R${getCurrentRoom()}/${getRoomsPerFloor()}`;
+    }
+    nativeCtx.fillText(`${floorLabel}  ${roomLabel}`, NATIVE_WIDTH / 2, 9);
+    nativeCtx.textAlign = 'left';
+}
+
+function renderCrossroadsLabels() {
+    const assign = gameProgress.pathAssignment;
+    if (!assign || !assign.right) return;
+
+    const stars   = { short: '\u2605', medium: '\u2605\u2605', long: '\u2605\u2605\u2605' };
+    const starCol = { short: '#aaffaa', medium: '#ffdd44', long: '#ff8844' };
+
+    nativeCtx.font = '5px monospace';
+
+    // --- RIGHT exit label ---
+    const rPath = assign.right;
+    nativeCtx.textAlign = 'right';
+    const rx = NATIVE_WIDTH - TILE_SIZE - 4;
+    const ry = NATIVE_HEIGHT / 2 - 4;
+    nativeCtx.fillStyle = '#FFD700';
+    nativeCtx.fillText('\u2192', rx, ry);
+    nativeCtx.fillStyle = starCol[rPath];
+    nativeCtx.fillText(stars[rPath], rx, ry + 8);
+
+    // --- UP exit label ---
+    const uPath = assign.up;
+    nativeCtx.textAlign = 'center';
+    const ux = NATIVE_WIDTH / 2;
+    const uy = GAME_AREA_Y + TILE_SIZE + 10;
+    nativeCtx.fillStyle = '#FFD700';
+    nativeCtx.fillText('\u2191', ux, uy);
+    nativeCtx.fillStyle = starCol[uPath];
+    nativeCtx.fillText(stars[uPath], ux, uy + 8);
+
+    // --- DOWN exit label ---
+    const dPath = assign.down;
+    const dx = NATIVE_WIDTH / 2;
+    const dy = (ROOM_ROWS - 1) * TILE_SIZE + GAME_AREA_Y - 22;
+    nativeCtx.fillStyle = '#FFD700';
+    nativeCtx.fillText('\u2193', dx, dy);
+    nativeCtx.fillStyle = starCol[dPath];
+    nativeCtx.fillText(stars[dPath], dx, dy + 8);
+
+    // Centre prompt
+    nativeCtx.fillStyle = '#ffffff';
+    nativeCtx.textAlign = 'center';
+    nativeCtx.fillText('CHOOSE YOUR PATH', NATIVE_WIDTH / 2, NATIVE_HEIGHT / 2 + 4);
     nativeCtx.textAlign = 'left';
 }
 
@@ -388,21 +535,33 @@ function renderFloorIntro(stateData) {
 
 function renderTransition(stateData) {
     updateTileCache();
-    // Slide effect
-    const progress = stateData.progress || 0; // 0 to 1
+    const progress = stateData.progress || 0;
+    const direction = stateData.direction || 'forward';
     const offset = Math.floor(progress * NATIVE_WIDTH);
 
-    // Current room slides left
-    nativeCtx.save();
-    nativeCtx.translate(-offset, 0);
-    renderRoom(stateData.oldLayout);
-    nativeCtx.restore();
+    if (direction === 'backward') {
+        // Current room slides right, previous room slides in from the left
+        nativeCtx.save();
+        nativeCtx.translate(offset, 0);
+        renderRoom(stateData.oldLayout);
+        nativeCtx.restore();
 
-    // New room slides in from right
-    nativeCtx.save();
-    nativeCtx.translate(NATIVE_WIDTH - offset, 0);
-    renderRoom(stateData.newLayout);
-    nativeCtx.restore();
+        nativeCtx.save();
+        nativeCtx.translate(-NATIVE_WIDTH + offset, 0);
+        renderRoom(stateData.newLayout);
+        nativeCtx.restore();
+    } else {
+        // Current room slides left, new room slides in from the right
+        nativeCtx.save();
+        nativeCtx.translate(-offset, 0);
+        renderRoom(stateData.oldLayout);
+        nativeCtx.restore();
+
+        nativeCtx.save();
+        nativeCtx.translate(NATIVE_WIDTH - offset, 0);
+        renderRoom(stateData.newLayout);
+        nativeCtx.restore();
+    }
 
     // Player
     if (player.active) {

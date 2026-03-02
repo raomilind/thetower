@@ -30,20 +30,46 @@ export const MAX_AMMO = 25;
 export const BULLET_PACK_AMMO = 5;
 export const BULLET_PACK_DROP_CHANCE = 0.3; // 30% chance on monster kill
 
+// Sword
+export const SWORD_RANGE = 40;       // pixels, melee reach
+export const SWORD_COOLDOWN = 20;    // frames between swings
+export const SWORD_SWING_FRAMES = 10; // frames the swing is visually active
+
 // Bullets
 export const BULLET_SPEED = 3;
 export const BULLET_SIZE = 4;
 export const BOSS_BULLET_SPEED = 1.8;
 export const BOSS_BULLET_SIZE = 6;
+export const MONSTER_BULLET_SPEED = 1.35;   // 75% of BOSS_BULLET_SPEED
+export const MONSTER_BULLET_SIZE = 5;
+export const MONSTER_SHOOT_INTERVAL = 200;  // frames between monster shots (~3.3s at 60fps)
 
 // Monsters
 export const MONSTER_SIZE = 16;
-export const MONSTER_BASE_SPEED = 0.5;
+export const MONSTER_BASE_SPEED = 1.6;          // 2× previous speed
+export const MONSTER_HP = 2; // Gun kills in 1 shot (2 dmg), sword takes 2 hits (1 dmg each)
+export const MONSTER_CLOSE_RANGE = 50;          // px — burst range
+export const MONSTER_CLOSE_SPEED_MULT = 1.5;    // speed multiplier when within close range
+export const MONSTER_SEPARATION_RANGE = 20;     // px — push apart if within this range
+export const MONSTER_SEPARATION_FORCE = 0.8;   // separation push strength per frame
+export const MONSTER_PREDICT_FRAMES = 10;       // frames ahead to predict player position
+export const MONSTER_STRIKER_RANGE = 32;        // px — monster this close = others circle and wait
+export const MONSTER_SWORD_DODGE_RANGE  = 56;  // px — react if within this distance of player
+export const MONSTER_SWORD_DODGE_SPEED  = 2.5; // multiplier when fleeing
+export const MONSTER_SWORD_DODGE_FRAMES = 12;  // frames of dodge movement
 
 // Boss
 export const BOSS_SIZE = 32;
 export const BOSS_HP = 10;
-export const BOSS_BASE_SPEED = 0.6;
+export const BOSS_SWORD_DODGE_RANGE = 60; // px — boss reacts to sword within this radius
+export const BOSS_BASE_SPEED = 1.2;            // 2× previous speed
+export const BOSS_PREFERRED_RANGE_MIN = 72;    // px — retreat if closer than this
+export const BOSS_PREFERRED_RANGE_MAX = 130;   // px — advance if farther than this
+export const BOSS_PREDICT_FRAMES = 15;         // frames ahead for bullet leading
+export const BOSS_DODGE_RANGE = 80;        // px — bullet detection radius
+export const BOSS_DODGE_SPEED_MULT = 2.8;  // how much faster the boss moves while dodging
+export const BOSS_DODGE_DURATION = 18;     // frames the dodge lasts
+export const BOSS_DODGE_COOLDOWN = 48;     // frames before the boss can dodge again
 
 // Difficulty settings
 export const DIFFICULTY = {
@@ -110,5 +136,12 @@ export const FLOORS = [
     { name: 'Throne Room', colors: { wall: '#DAA520', floor: '#8B0000', accent: '#4169E1' }, monsters: ['Elite Guard', 'Dark Wizard'], boss: 'Dark King' }
 ];
 
-export const ROOMS_PER_FLOOR = 8;
+export const ROOMS_PER_FLOOR = 8; // legacy default — paths are now dynamic
 export const TOTAL_FLOORS = 10;
+
+// Path branching system
+export const PATH_CONFIG = {
+    short:  { rooms: 8,  monsterBonus: 0, speedBonus: 0   },
+    medium: { rooms: 16, monsterBonus: 2, speedBonus: 0.3 },
+    long:   { rooms: 24, monsterBonus: 4, speedBonus: 0.6 },
+};

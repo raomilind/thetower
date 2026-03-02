@@ -1,7 +1,7 @@
 // The Tower - Player Entity
 
-import { PLAYER_SIZE, PLAYER_SPEED, PLAYER_MAX_LIVES, SHOOT_COOLDOWN, INVINCIBILITY_FRAMES, DIR, DIR_VEC, GAME_AREA_Y, NATIVE_WIDTH, NATIVE_HEIGHT, STARTING_AMMO, MAX_AMMO } from './constants.js';
-import { getMoveDir, isShootPressed } from './input.js';
+import { PLAYER_SIZE, PLAYER_SPEED, PLAYER_MAX_LIVES, SHOOT_COOLDOWN, INVINCIBILITY_FRAMES, DIR, DIR_VEC, GAME_AREA_Y, NATIVE_WIDTH, NATIVE_HEIGHT, STARTING_AMMO, MAX_AMMO, SWORD_COOLDOWN, SWORD_SWING_FRAMES } from './constants.js';
+import { getMoveDir, isShootPressed, isKeyJustPressed } from './input.js';
 import { createBullet } from './bullet.js';
 import { collidesWithWalls } from './collision.js';
 import { sfxShoot, sfxPlayerHit } from './audio.js';
@@ -19,6 +19,12 @@ export const player = {
     animFrame: 0,
     animTimer: 0,
     active: true,
+    weapon: 'gun',       // 'gun' or 'sword'
+    swordCooldown: 0,
+    swordSwing: 0,       // frames remaining in swing animation
+    swordHit: false,     // whether damage has been dealt this swing
+    vx: 0,              // velocity last frame (for enemy prediction)
+    vy: 0,
 };
 
 export function resetPlayer(fullReset = false) {
@@ -28,6 +34,10 @@ export function resetPlayer(fullReset = false) {
     player.shootCooldown = 0;
     player.invincibility = 0;
     player.active = true;
+    player.weapon = 'gun';
+    player.swordCooldown = 0;
+    player.swordSwing = 0;
+    player.swordHit = false;
     if (fullReset) {
         player.lives = PLAYER_MAX_LIVES;
     }
@@ -38,6 +48,8 @@ export function updatePlayer(roomLayout, roomCleared) {
 
     // Movement
     const { dx, dy } = getMoveDir();
+    const prevX = player.x;
+    const prevY = player.y;
 
     if (dx !== 0 || dy !== 0) {
         // Update facing direction (prioritize last pressed)
@@ -73,19 +85,39 @@ export function updatePlayer(roomLayout, roomCleared) {
         }
     }
 
-    // Shooting
+    // Record velocity for enemy prediction
+    player.vx = player.x - prevX;
+    player.vy = player.y - prevY;
+
+    // Weapon switching
+    if (isKeyJustPressed('Digit1')) player.weapon = 'gun';
+    if (isKeyJustPressed('Digit2')) player.weapon = 'sword';
+
+    // Gun cooldown
     if (player.shootCooldown > 0) {
         player.shootCooldown--;
     }
 
-    if (isShootPressed() && player.shootCooldown <= 0 && player.ammo > 0) {
-        const vec = DIR_VEC[player.direction];
-        const cx = player.x + player.width / 2;
-        const cy = player.y + player.height / 2;
-        createBullet(cx, cy, vec.x, vec.y, true);
-        player.ammo--;
-        player.shootCooldown = SHOOT_COOLDOWN;
-        sfxShoot();
+    // Sword cooldown and swing timer
+    if (player.swordCooldown > 0) player.swordCooldown--;
+    if (player.swordSwing > 0) player.swordSwing--;
+
+    if (player.weapon === 'gun') {
+        if (isShootPressed() && player.shootCooldown <= 0 && player.ammo > 0) {
+            const vec = DIR_VEC[player.direction];
+            const cx = player.x + player.width / 2;
+            const cy = player.y + player.height / 2;
+            createBullet(cx, cy, vec.x, vec.y, true);
+            player.ammo--;
+            player.shootCooldown = SHOOT_COOLDOWN;
+            sfxShoot();
+        }
+    } else if (player.weapon === 'sword') {
+        if (isShootPressed() && player.swordCooldown <= 0) {
+            player.swordSwing = SWORD_SWING_FRAMES;
+            player.swordHit = false;
+            player.swordCooldown = SWORD_COOLDOWN;
+        }
     }
 
     // Invincibility countdown
@@ -97,6 +129,14 @@ export function updatePlayer(roomLayout, roomCleared) {
 export function damagePlayer() {
     if (player.invincibility > 0) return false;
     player.lives--;
+    player.invincibility = INVINCIBILITY_FRAMES;
+    sfxPlayerHit();
+    return true;
+}
+
+export function damagePlayerDouble() {
+    if (player.invincibility > 0) return false;
+    player.lives -= 2;
     player.invincibility = INVINCIBILITY_FRAMES;
     sfxPlayerHit();
     return true;
@@ -123,4 +163,19 @@ export function ensureMinAmmo(min) {
 // Check if player is at the right edge (for room transition)
 export function isPlayerAtRightEdge() {
     return player.x >= NATIVE_WIDTH - player.width - 2;
+}
+
+// Check if player is at the left edge (for returning to previous room)
+export function isPlayerAtLeftEdge() {
+    return player.x <= 2;
+}
+
+// Check if player reached the top opening (crossroads path selection)
+export function isPlayerAtTopEdge() {
+    return player.y <= GAME_AREA_Y + 2;
+}
+
+// Check if player reached the bottom opening (crossroads path selection)
+export function isPlayerAtBottomEdge() {
+    return player.y >= NATIVE_HEIGHT - player.height - 2;
 }

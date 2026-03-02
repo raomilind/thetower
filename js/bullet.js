@@ -1,6 +1,6 @@
 // The Tower - Bullet System
 
-import { BULLET_SPEED, BULLET_SIZE, BOSS_BULLET_SPEED, BOSS_BULLET_SIZE, NATIVE_WIDTH, NATIVE_HEIGHT } from './constants.js';
+import { BULLET_SPEED, BULLET_SIZE, BOSS_BULLET_SPEED, BOSS_BULLET_SIZE, MONSTER_BULLET_SPEED, MONSTER_BULLET_SIZE, NATIVE_WIDTH, NATIVE_HEIGHT } from './constants.js';
 
 export const bullets = [];
 
@@ -15,6 +15,21 @@ export function createBullet(x, y, dx, dy, isPlayerBullet = true) {
         dx: dx * speed,
         dy: dy * speed,
         isPlayerBullet,
+        isMonsterBullet: false,
+        active: true
+    });
+}
+
+export function createMonsterBullet(x, y, dx, dy) {
+    bullets.push({
+        x: x - MONSTER_BULLET_SIZE / 2,
+        y: y - MONSTER_BULLET_SIZE / 2,
+        width: MONSTER_BULLET_SIZE,
+        height: MONSTER_BULLET_SIZE,
+        dx: dx * MONSTER_BULLET_SPEED,
+        dy: dy * MONSTER_BULLET_SPEED,
+        isPlayerBullet: false,
+        isMonsterBullet: true,
         active: true
     });
 }

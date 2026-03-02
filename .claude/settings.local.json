@@ -11,7 +11,8 @@
       "Bash(powershell.exe -Command \"Invoke-WebRequest -Uri ''http://localhost:8080/'' -UseBasicParsing | Select-Object -ExpandProperty StatusCode\")",
       "Bash(git remote add:*)",
       "Bash(git branch:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(gh auth status:*)"
     ]
   }
 }
